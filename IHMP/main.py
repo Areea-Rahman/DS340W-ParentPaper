@@ -1,12 +1,16 @@
 import numpy as np
 import tensorflow as tf
 import os
+import sys
 from sklearn.metrics import f1_score, precision_score, recall_score, roc_auc_score, accuracy_score
 import argparse
 
-from IHMP.model_builder import build_LSTM_model
+sys.path.append(os.path.abspath("C:/Users/nitiy/MEME/model_extraction/model_extraction"))
+sys.path.append(os.path.abspath("C:/Users/nitiy/MEME/model_extraction/utils"))
+
+from model_builder import build_LSTM_model
 from model_extraction.model_extraction import ExtractedModel
-from IHMP.representation_converters import MimicRepConverter
+from representation_converters import MimicRepConverter
 from model_extraction.utils import save_model_results, evaluate_extracted_model, \
     pred_label_thresholded, get_confident_points, get_balanced_dataset, compute_average_metrics, compute_window_effect, \
     save_window_effect_results, check_dir_exists
@@ -52,30 +56,34 @@ Features are:
 def data_loader_ihm(data_path):
 
     # Specify paths to data files
-    x_train_name, y_train_name  = os.path.join(data_path, "X_train.npy"),   os.path.join(data_path, "y_train.npy")
-    x_val_name, y_val_name      = os.path.join(data_path, "X_val.npy"),     os.path.join(data_path, "y_val.npy")
-    x_test_name, y_test_name    = os.path.join(data_path, "X_test.npy"),    os.path.join(data_path, "y_test.npy")
+    x_train_name, y_train_name  = os.path.join(data_path, "train", "X_train.npy"),   os.path.join(data_path, "train", "y_train.npy")
+    #x_val_name, y_val_name      = os.path.join(data_path, "X_val.npy"),     os.path.join(data_path, "y_val.npy")
+    x_test_name, y_test_name    = os.path.join(data_path, "test", "X_test.npy"),    os.path.join(data_path, "test", "y_test.npy")
 
     # Load data from data files
-    x_train, y_train = np.load(x_train_name), np.load(y_train_name)
-    x_val, y_val = np.load(x_val_name), np.load(y_val_name)
-    x_test, y_test = np.load(x_test_name), np.load(y_test_name)
+    x_train, y_train = np.load(x_train_name, allow_pickle=True), np.load(y_train_name, allow_pickle=True)
+    #x_val, y_val = np.load(x_val_name), np.load(y_val_name)
+    x_test, y_test = np.load(x_test_name, allow_pickle=True), np.load(y_test_name, allow_pickle=True)
+    x_train = np.array(x_train, dtype=np.float32)
+    y_train = np.array(y_train, dtype=np.float32)
+    x_test = np.array(x_test, dtype=np.float32)
+    y_test = np.array(y_test, dtype=np.float32)
 
     # Balance out the datasets via downsampling
     x_train, y_train    = get_balanced_dataset(x_train, y_train)
-    x_val, y_val        = get_balanced_dataset(x_val, y_val)
+    #x_val, y_val        = get_balanced_dataset(x_val, y_val)
     x_test, y_test      = get_balanced_dataset(x_test, y_test)
 
-    return (x_train, y_train, x_val, y_val, x_test, y_test)
+    return (x_train, y_train, x_test, y_test)
 
 
 
 def get_model(dataset_path, model_save_path):
 
-    x_train, y_train, x_val, y_val, x_test, y_test = data_loader_ihm(dataset_path)
+    x_train, y_train, x_test, y_test = data_loader_ihm(dataset_path)
 
     # build the network
-    _, seq_len, n_features = x_train.shape
+    num_patients, seq_len, n_features = x_train.shape
     model = build_LSTM_model(n_features, seq_len)
 
     if os.path.exists(model_save_path):
@@ -86,7 +94,7 @@ def get_model(dataset_path, model_save_path):
         cp_callback = tf.keras.callbacks.ModelCheckpoint(filepath=model_save_path, verbose=True)
 
         # fit the network
-        model.fit(x_train, y_train, epochs=10, batch_size=100, validation_data=(x_val, y_val), verbose=1, callbacks = [cp_callback])
+        model.fit(x_train, y_train, epochs=10, batch_size=100, verbose=1, callbacks = [cp_callback])
 
         model.save_weights(model_save_path)
 
@@ -125,16 +133,16 @@ def mimic3(**params):
     rnn_model = get_model(dataset_path, checkpoint_path)
 
     # Load original dataset
-    x_train, y_train, x_val, y_val, x_test, y_test = data_loader_ihm(dataset_path)
+    x_train, y_train, x_test, y_test = data_loader_ihm(dataset_path)
 
     # Filter out high-confident points
     x_train, y_train    = get_confident_points(rnn_model, x_train, y_train)
-    x_val, y_val        = get_confident_points(rnn_model, x_val, y_val)
+    #x_val, y_val        = get_confident_points(rnn_model, x_val, y_val)
     x_test, y_test      = get_confident_points(rnn_model, x_test, y_test)
 
     # Combine train and val sets
-    x_train = np.vstack([x_train, x_val])
-    y_train = np.concatenate([y_train, y_val])
+    #x_train = np.vstack([x_train, x_val])
+    #y_train = np.concatenate([y_train, y_val])
 
     # Balance out the datasets
     x_train, y_train    = get_balanced_dataset(x_train, y_train)
@@ -192,15 +200,15 @@ if __name__ == '__main__':
 
     parser = argparse.ArgumentParser()
 
-    parser.add_argument('window_size',          type=int, default=0,    help='Context window size to use during model extraction')
-    parser.add_argument('max_trans_samples',    type=int, default=None, help='Maximum number of samples to use for transition model training')
-    parser.add_argument('max_state_samples',    type=int, default=None, help='Maximum number of samples to use for concept (aka state) extraction')
+    parser.add_argument('window_size',          type=int, default=64,    help='Context window size to use during model extraction')
+    parser.add_argument('max_trans_samples',    type=int, default=1000, help='Maximum number of samples to use for transition model training')
+    parser.add_argument('max_state_samples',    type=int, default=1000, help='Maximum number of samples to use for concept (aka state) extraction')
     parser.add_argument('layer_id',             type=int, default=-2,   help='ID of the recurrent layer to use for the latent space')
     parser.add_argument('n_states',             type=int, default=2,    help='Number of concepts (aka states) to extract')
     parser.add_argument('t_model',              type=str, choices=['dt', 'mlp'], default='dt', help='Type of transition model to use')
-    parser.add_argument('exp_path',             type=str, default = "./", help='Path for saving experiments')
-    parser.add_argument('dataset_path',         type=str, default = "./", help='Path to the dataset')
-    parser.add_argument('model_save_path',      type=str, default = "./", help='Path for saving/loading the RNN model')
+    parser.add_argument('exp_path',             type=str, default = "C:/Users/nitiy/MEME/IHMP/results", help='Path for saving experiments')
+    parser.add_argument('dataset_path',         type=str, default = "C:/Users/nitiy/MEME/mortality", help='Path to the dataset')
+    parser.add_argument('model_save_path',      type=str, default = "C:/Users/nitiy/MEME/IHMP/model/model1.keras", help='Path for saving/loading the RNN model')
 
     args = parser.parse_args()
 
